@@ -4,7 +4,15 @@ using System.ComponentModel.DataAnnotations;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// --- GÜVENLİ BAĞLANTI AYARI ---
+// --- CORS AYARI (Netlify ile konuşabilmek için) ---
+builder.Services.AddCors(options => {
+    options.AddPolicy("AllowAll", p => p
+        .AllowAnyOrigin()
+        .AllowAnyMethod()
+        .AllowAnyHeader());
+});
+
+// --- BAĞLANTI AYARI ---
 string connectionString = "";
 try {
     var rawConn = Environment.GetEnvironmentVariable("DATABASE_URL");
@@ -13,28 +21,28 @@ try {
         var userInfo = uri.UserInfo.Split(':');
         connectionString = $"Host={uri.Host};Port={uri.Port};Username={userInfo[0]};Password={userInfo[1]};Database={uri.LocalPath.TrimStart('/')};SslMode=Require;Trust Server Certificate=true";
     } else {
-        connectionString = rawConn ?? builder.Configuration.GetConnectionString("DefaultConnection") ?? "";
+        // Eğer Neon DB kullanıyorsan direkt adresi buraya tırnak içine de yazabilirsin kanka
+        connectionString = rawConn ?? "Host=ep-sweet-hill-amyrp03u-pooler.c-5.us-east-1.aws.neon.tech;Database=neondb;Username=neondb_owner;Password=npg_ApL4OMthEs9C;SslMode=Require;Trust Server Certificate=true;";
     }
 } catch (Exception ex) {
-    Console.WriteLine("Bağlantı dizesi ayrıştırma hatası: " + ex.Message);
+    Console.WriteLine("Bağlantı hatası: " + ex.Message);
 }
 
 builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString));
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
 
 var app = builder.Build();
 
-// Veritabanı oluşturma işlemini bir kontrol içine alıyoruz
+// Veritabanı otomatik oluşturma
 try {
     using (var scope = app.Services.CreateScope()) {
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         context.Database.EnsureCreated();
     }
 } catch (Exception ex) {
-    Console.WriteLine("Veritabanı oluşturma hatası: " + ex.Message);
+    Console.WriteLine("DB Hatası: " + ex.Message);
 }
 
 app.UseSwagger();
@@ -43,7 +51,11 @@ app.UseSwaggerUI(c => {
     c.RoutePrefix = string.Empty; 
 });
 
+// SIRALAMA ÖNEMLİ: Routing -> CORS -> Authorization
+app.UseRouting();
 app.UseCors("AllowAll");
+app.UseAuthorization();
+
 app.MapControllers();
 app.Run();
 
@@ -67,10 +79,12 @@ public class AuthController : ControllerBase {
 
     [HttpPost("register")]
     public async Task<IActionResult> Register(User user) {
-        if (await _context.Users.AnyAsync(u => u.Username == user.Username)) return BadRequest("Bu kullanıcı adı alınmış.");
-        _context.Users.Add(user);
+        if (await _context.Users.AnyAsync(u => u.Username == user.Username)) 
+            return BadRequest("Bu kullanıcı adı alınmış.");
+            
+        _context.Add(user);
         await _context.SaveChangesAsync();
-        return Ok("Kayıt başarılı!");
+        return Ok(new { message = "Kayıt başarılı!" });
     }
 
     [HttpPost("login")]
